@@ -1,0 +1,45 @@
+---
+title: "Project: Data Cleaning and QC"
+author: "Jan Knappe"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    toc_collapsed: true
+toc_depth: 3
+number_sections: true
+theme: spacelab
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, message = FALSE}
+library(tidyverse)
+```
+
+
+## Data import
+
+```{r}
+data = 
+    read_csv(
+        "data/weather_data.csv",
+        col_types = cols(date = col_date(format = ""),
+                         airTemperature = col_double(),
+                         atmPressure = col_double(),
+                         netRadiation = col_double(),
+                         rainfall = col_double(),
+                         relativeHumidity = col_double(),
+                         soilTemperature = col_double())
+    )
+```
+
+## Summary stats
+
+```{r}
+data %>% summary()
+```
+

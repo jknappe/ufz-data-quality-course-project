@@ -1,0 +1,232 @@
+---
+title: "Project: Data Cleaning and QC"
+author: "Jan Knappe"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    toc_collapsed: true
+toc_depth: 3
+number_sections: true
+theme: spacelab
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, message = FALSE}
+library(tidyverse)
+library(mice)
+library(mvoutlier, quietly = TRUE)
+source("dd.plot2.R")
+```
+
+
+## Data import
+
+```{r}
+data = 
+    read_csv(
+        "data/weather_data.csv",
+        col_types = cols(date = col_date(format = ""),
+                         airTemperature = col_double(),
+                         atmPressure = col_double(),
+                         netRadiation = col_double(),
+                         rainfall = col_double(),
+                         relativeHumidity = col_double(),
+                         soilTemperature = col_double())
+    )
+```
+
+## Summary stats
+
+```{r}
+data %>% summary()
+```
+```{r}
+data %>% glimpse()
+
+```
+
+## Data manipulation
+
+Strange entries in soilTemperature 
+
+```{r}
+summary(data$soilTemperature)
+ggplot(data, aes(x = date, y = soilTemperature)) + 
+    geom_point()
+
+length(data$soilTemperature[data$soilTemperature < - 50])
+
+# replace everything below -50 degree with NA
+(data <- data %>% mutate_at("soilTemperature", ~ifelse(. < -50 , NA, .)))
+```
+
+
+## Pattern of missing data
+
+```{r}
+misspat <- mice::md.pattern(data)
+
+mtext("N. missing values in variable", side = 1, padj = 5)
+  mtext("N. observations with pattern", side = 2, padj = -2)
+  mtext("Variable", side = 3, padj = -3)
+  mtext("N. missing values in pattern", side = 4, padj = -2)
+
+```
+
+
+Column relativeHumidity contains NA's
+
+```{r}
+ggplot(data, aes(x = date, y = relativeHumidity)) + 
+    geom_point()
+
+```
+
+## Linear interpolation
+
+```{r}
+ina <- which(is.na(data$relativeHumidity))
+dim(data[ina,])
+#datafilt <- subset(data, filtration =="yes")
+
+ppm3int <- approx(x = data$date, # helper variable: time
+                  y = data$relativeHumidity, # variable with missing values
+                  xout = data$date[ina]) # which times to interpolate
+ppm3int
+
+```
+
+```{r}
+plot(relativeHumidity ~ date, data = data, pch = 16,
+     xlab = "Time (days)", ylab = "Relative Humidity")
+
+# Add the interpolated values
+points(ppm3int$x, ppm3int$y, pch = 16, col = "red")
+
+```
+
+## Outliers with Mahalanobis distance
+
+```{r}
+dat.noNA <- na.exclude(data)
+
+# Calculate Mahalanobis distance
+centre <- colMeans(dat.noNA[,c("airTemperature","atmPressure","netRadiation","rainfall", "relativeHumidity", "soilTemperature")])
+varcov <- cov(dat.noNA[,c("airTemperature","atmPressure","netRadiation","rainfall", "relativeHumidity", "soilTemperature")])
+# mahalanobis() gives the squared distance by default so we take the square-root
+mdist <- sqrt(mahalanobis(dat.noNA[,c("airTemperature","atmPressure","netRadiation","rainfall", "relativeHumidity", "soilTemperature")], 
+            center = centre, cov = varcov))
+
+# Visualise the distances
+hist(mdist, col = "grey", xlab = "Mahalanobis distances", main = "")
+
+```
+```{r}
+dout <- qchisq(p = 0.01, lower.tail = FALSE,
+               df =6) # df: number of variables used to calculate the distance
+dout
+
+any(mdist > dout)
+```
+
+
+## Outliers with Robust Mahalanobis distance
+
+```{r}
+# Calculate the robust Mahalanobis distance
+# and identify outliers
+d <- dd.plot2(dat.noNA[,c("airTemperature","atmPressure","netRadiation","rainfall", "relativeHumidity", "soilTemperature")],
+             alpha = 0.01)
+
+# Inspect the robust Mahalanobis distances
+hist(d$md.rob, col = "grey", xlab = "Robust Mahalanobis distances", main = "")
+
+index <- which(d$outliers)
+dat.noNA[index,]
+```
+
+```{r}
+cols <- rep(grey(0,0.5), nrow(dat.noNA))
+cols[index] <- "red"
+pairs(dat.noNA[,c("airTemperature","atmPressure","netRadiation","rainfall", "relativeHumidity", "soilTemperature")],
+      pch = 16, col = cols)
+
+```
+
+
+so these are all high rain fall events!
+some might be indeed a little extreme, but everything above ~4 mm?
+
+
+```{r}
+
+dat.noNA$rMhlnb_out <- d$outliers
+
+dat.noNA %>% #filter(date > '2015-12-31'  & date < '2018-01-01') %>%
+ggplot(aes(x = date, y = rainfall, color = rMhlnb_out)) + 
+  geom_point()
+```
+
+
+
+
+```{r}
+dat.noNA %>% pivot_longer(cols = -c(date, rMhlnb_out, numdate),
+                          names_to = "variable") %>% 
+ggplot(aes(x = date, y = value, )) + 
+  facet_grid(variable~., scales = "free_y") +
+  geom_point()
+```
+
+
+Alle anderen Variablen haben eine mehr oder weniger offensichtliche Saisonalität und dadurch eine deutlichere Normalverteilung:
+
+```{r}
+dat.noNA %>% pivot_longer(cols = -c(date, rMhlnb_out, numdate),
+                          names_to = "variable") %>% 
+ggplot(aes(x = value, )) + 
+  facet_grid(.~variable, scales = "free_x") +
+  geom_histogram()
+```
+
+Gut, ne. Die Bodentemperatur ist ja fast uniform, Strahlung und Luftfeuchte deutlich skewed...
+
+
+
+```{r}
+# Load the package
+library(EMD)
+
+# Create a numeric time variable from the dates
+dat.noNA$numdate <- as.numeric(difftime(dat.noNA$date, min(dat.noNA$date), units = "days"))
+
+# Run the EMD and extract the Intrinsic Mode Functions
+# (we set the maximum number of IMF's to 10)
+imfs <- emd(xt = dat.noNA$atmPressure, tt = dat.noNA$numdate, max.imf = 10)
+imfs <- imfs$imf
+
+#Let’s visualise the fitted IMF’s.
+```
+
+
+```{r}
+# Visualise the IMF's
+layout(matrix(1:ncol(imfs), ncol = 1))
+par(mar = c(2,4,2,2))
+apply(imfs, 2, plot, type = "l", col = "blue", xlab = "", ylab = "")
+```
+```{r}
+# Make a histogram of the noise
+hist(imfs[,1], col = "blue")
+```
+
+
+```{r}
+
+```
+
