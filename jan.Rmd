@@ -18,6 +18,9 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r, message = FALSE}
 library(tidyverse)
+library(mice)
+library(mvoutlier, quietly = TRUE)
+source("dd.plot2.R")
 ```
 
 
@@ -42,4 +45,115 @@ data =
 ```{r}
 data %>% summary()
 ```
+```{r}
+data %>% glimpse()
 
+```
+
+## Data manipulation
+
+Strange entries in soilTemperature 
+
+```{r}
+summary(data$soilTemperature)
+ggplot(data, aes(x = date, y = soilTemperature)) + 
+    geom_point()
+
+length(data$soilTemperature[data$soilTemperature < - 50])
+
+# replace everything below -50 degree with NA
+(data <- data %>% mutate_at("soilTemperature", ~ifelse(. < -50 , NA, .)))
+```
+
+
+## Pattern of missing data
+
+```{r}
+misspat <- mice::md.pattern(data)
+
+mtext("N. missing values in variable", side = 1, padj = 5)
+  mtext("N. observations with pattern", side = 2, padj = -2)
+  mtext("Variable", side = 3, padj = -3)
+  mtext("N. missing values in pattern", side = 4, padj = -2)
+
+```
+
+
+Column relativeHumidity contains NA's
+
+```{r}
+ggplot(data, aes(x = date, y = relativeHumidity)) + 
+    geom_point()
+
+```
+
+## Linear interpolation
+
+```{r}
+ina <- which(is.na(data$relativeHumidity))
+dim(data[ina,])
+#datafilt <- subset(data, filtration =="yes")
+
+ppm3int <- approx(x = data$date, # helper variable: time
+                  y = data$relativeHumidity, # variable with missing values
+                  xout = data$date[ina]) # which times to interpolate
+ppm3int
+
+```
+
+```{r}
+plot(relativeHumidity ~ date, data = data, pch = 16,
+     xlab = "Time (days)", ylab = "Relative Humidity")
+
+# Add the interpolated values
+points(ppm3int$x, ppm3int$y, pch = 16, col = "red")
+
+```
+
+## Outliers with Mahalanobis distance
+
+```{r}
+dat.noNA <- na.exclude(data)
+
+# Calculate Mahalanobis distance
+centre <- colMeans(dat.noNA[,c("airTemperature","atmPressure","netRadiation","rainfall", "relativeHumidity", "soilTemperature")])
+varcov <- cov(dat.noNA[,c("airTemperature","atmPressure","netRadiation","rainfall", "relativeHumidity", "soilTemperature")])
+# mahalanobis() gives the squared distance by default so we take the square-root
+mdist <- sqrt(mahalanobis(dat.noNA[,c("airTemperature","atmPressure","netRadiation","rainfall", "relativeHumidity", "soilTemperature")], 
+            center = centre, cov = varcov))
+
+# Visualise the distances
+hist(mdist, col = "grey", xlab = "Mahalanobis distances", main = "")
+
+```
+```{r}
+dout <- qchisq(p = 0.01, lower.tail = FALSE,
+               df =6) # df: number of variables used to calculate the distance
+dout
+
+any(mdist > dout)
+```
+
+
+## Outliers with Robust Mahalanobis distance
+
+```{r}
+# Calculate the robust Mahalanobis distance
+# and identify outliers
+d <- dd.plot2(dat.noNA[,c("airTemperature","atmPressure","netRadiation","rainfall", "relativeHumidity", "soilTemperature")],
+             alpha = 0.01)
+
+# Inspect the robust Mahalanobis distances
+hist(d$md.rob, col = "grey", xlab = "Robust Mahalanobis distances", main = "")
+
+index <- which(d$outliers)
+dat.noNA[index,]
+```
+
+```{r}
+cols <- rep(grey(0,0.5), nrow(dat.noNA))
+cols[index] <- "red"
+pairs(dat.noNA[,c("airTemperature","atmPressure","netRadiation","rainfall", "relativeHumidity", "soilTemperature")],
+      pch = 16, col = cols)
+
+```
