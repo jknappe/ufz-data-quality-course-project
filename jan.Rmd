@@ -18,10 +18,16 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r, message = FALSE}
 library(tidyverse)
+library(rstatix)
+library(GGally)
+library(tibble)
+library(naniar)
 ```
 
 
 ## Data import
+
+Import weather station data. Soil temperature sensors send error code -999. Needs to be replaced with NAs.
 
 ```{r}
 data = 
@@ -34,12 +40,170 @@ data =
                          rainfall = col_double(),
                          relativeHumidity = col_double(),
                          soilTemperature = col_double())
-    )
+    ) %>% 
+  # replace sensor error codes with NAs
+  mutate(soilTemperature = ifelse(soilTemperature == -999, NA, soilTemperature))
 ```
 
-## Summary stats
+## Descriptive Stats
+
+Check summary stats. Data looks ok and within reasonable bounds. Clear seasonal cycles for temperatures and humidity.
 
 ```{r}
-data %>% summary()
+data  %>%
+  rstatix::get_summary_stats(type = "five_number")
 ```
+
+Pairwise plot for a quick overview of potential correlations.
+
+```{r message = FALSE, warning = FALSE, out.width = "100%"}
+data %>% 
+  GGally::ggpairs() +
+  theme_bw()
+```
+
+## Missing data
+
+There appears to be a period in late 2017 when all variables are missing; potential data loss or pwer outage at the station. Apart from that, single sensors have occasionally missing data potentially related to sensor failure. Since air tempertaure and relative humidity are measured with the same sensor, it's logical that the missingness patterns are identical.
+
+### Overall percentage of missingness
+
+```{r}
+naniar::gg_miss_var(data, show_pct = TRUE)
+```
+
+### Temporal patterns of missingness
+
+```{r}
+naniar::vis_miss(data) +
+  theme(axis.text.x.top = element_text(angle = 70))
+```
+
+### Upset plot of missingness
+
+```{r}
+naniar::gg_miss_upset(data)
+```
+
+
+```{r}
+ggplot(data,
+       aes(x = airTemperature,
+           y = atmPressure)) +
+ geom_miss_point()
+```
+
+
+## Imputation
+
+### Multivariate Imputation by Chained Equations
+
+```{r}
+library(mice)
+
+# Impute missing data
+imp = 
+  mice(data = data,
+       m = 50,
+       seed = 321, 
+       print = FALSE)
+```
+
+Check for variable: airTemperature
+
+```{r fig.width = 10, out.width="100%"}
+imp_temp = 
+  data %>%
+  select(date, airTemperature) %>%
+  mutate(missing_nr = cumsum(is.na(airTemperature)),
+         missing_nr = ifelse(missing_nr == lag(missing_nr) & !missing_nr == 1, NA, missing_nr)) %>%
+  left_join(imp[["imp"]][["airTemperature"]] %>% 
+              mutate(missing_nr = row_number()) %>%
+              gather(iteration, imputation, -missing_nr) %>%
+              group_by(missing_nr) %>%
+              summarise(mean_mice = mean(imputation),
+                        se_mice =  qnorm(0.975)*sd(imputation)/sqrt(n())) %>%
+              ungroup(),
+            by = "missing_nr")
+
+ggplot(imp_temp) +
+  geom_point(aes(x = date,
+                 y = airTemperature, 
+                 color = "Measured data")) +
+  geom_errorbar(aes(x = date,
+                 y = mean_mice, 
+                 ymin = mean_mice - se_mice,
+                 ymax = mean_mice + se_mice,
+                 color = "Imputation: MICE")) +
+  geom_point(aes(x = date,
+                 y = mean_mice))
+
+```
+
+
+Check for variable: rainfall
+
+```{r}
+imp_rain = 
+  data %>%
+  select(date, rainfall) %>%
+  mutate(missing_nr = cumsum(is.na(rainfall)),
+         missing_nr = ifelse(missing_nr == lag(missing_nr) & !missing_nr == 1, NA, missing_nr)) %>%
+  left_join(imp[["imp"]][["rainfall"]] %>% 
+              mutate(missing_nr = row_number()) %>%
+              gather(iteration, imputation, -missing_nr) %>%
+              group_by(missing_nr) %>%
+              summarise(mean_mice = mean(imputation),
+                        se_mice =  qnorm(0.975)*sd(imputation)/sqrt(n())) %>%
+              ungroup(),
+            by = "missing_nr")
+
+ggplot(imp_rain) +
+  geom_point(aes(x = date,
+                 y = rainfall, 
+                 color = "Measured data")) +
+  geom_errorbar(aes(x = date,
+                 y = mean_mice, 
+                 ymin = mean_mice - se_mice,
+                 ymax = mean_mice + se_mice,
+                 color = "Imputation: MICE")) +
+  geom_point(aes(x = date,
+                 y = mean_mice))
+```
+
+Check for variable: atmPressure
+
+```{r}
+
+```
+
+
+```{r}
+# # Fit a linear model for each set of imputation
+# mods <- with(imp, lm(ppm3 ~ filtration))
+# 
+# # Pool the results of the coefficient estimates
+# coefs.pool <- pool(mods)
+# summary(coefs.pool)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
