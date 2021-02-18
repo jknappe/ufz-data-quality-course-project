@@ -1,6 +1,6 @@
 ---
 title: "Project: Data Cleaning and QC"
-author: "Jan Knappe"
+author: "Lisa Steinheuer"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
 output: 
   html_document:
@@ -79,10 +79,10 @@ mtext("N. missing values in variable", side = 1, padj = 5)
 ```
 
 
-Column relativeHumidity contains NA's
+Air temperature and soil temperature are linaerly correlated to each other so maybe we can infer missing values of soil Temperature based on Air temperature entires. 
 
 ```{r}
-ggplot(data, aes(x = date, y = relativeHumidity)) + 
+ggplot(data, aes(x = airTemperature, y = soilTemperature)) + 
     geom_point()
 
 ```
@@ -90,23 +90,23 @@ ggplot(data, aes(x = date, y = relativeHumidity)) +
 ## Linear interpolation
 
 ```{r}
-ina <- which(is.na(data$relativeHumidity))
+ina <- which(is.na(data$soilTemperature))
 dim(data[ina,])
 #datafilt <- subset(data, filtration =="yes")
 
-ppm3int <- approx(x = data$date, # helper variable: time
-                  y = data$relativeHumidity, # variable with missing values
-                  xout = data$date[ina]) # which times to interpolate
-ppm3int
+soilTempInter <- approx(x = data$airTemperature, # helper variable: time
+                  y = data$soilTemperature, # variable with missing values
+                  xout = data$airTemperature[ina]) # which times to interpolate
+soilTempInter
 
 ```
 
 ```{r}
-plot(relativeHumidity ~ date, data = data, pch = 16,
-     xlab = "Time (days)", ylab = "Relative Humidity")
+plot(airTemperature ~ soilTemperature, data = data, pch = 16,
+     xlab = "Soil Temperature", ylab = "Air Temperature")
 
 # Add the interpolated values
-points(ppm3int$x, ppm3int$y, pch = 16, col = "red")
+points(soilTempInter$x, soilTempInter$y, pch = 16, col = "red")
 
 ```
 
@@ -134,6 +134,8 @@ dout
 any(mdist > dout)
 ```
 
+No outliers were dected using the 'normal' Mahalanobis distance.
+
 
 ## Outliers with Robust Mahalanobis distance
 
@@ -157,3 +159,5 @@ pairs(dat.noNA[,c("airTemperature","atmPressure","netRadiation","rainfall", "rel
       pch = 16, col = cols)
 
 ```
+
+It appears that all days with more than ca 5 mm rainfall were detected as outliers using the robust Mahalanobis measure.
